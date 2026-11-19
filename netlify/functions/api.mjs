@@ -7,13 +7,39 @@ const headers = {
   "Access-Control-Allow-Headers": "Content-Type"
 };
 
+// Read connection settings from the site's environment variables.
+// DB_* is the primary naming; TIDB_* is kept as a fallback for older setups.
+function env(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value !== undefined && value !== "") return value.trim();
+  }
+  return undefined;
+}
+
+function getDbConfig() {
+  const config = {
+    host: env("DB_HOST", "TIDB_HOST"),
+    port: Number(env("DB_PORT", "TIDB_PORT") || 4000),
+    user: env("DB_USER", "TIDB_USER"),
+    password: env("DB_PASSWORD", "TIDB_PASSWORD"),
+    database: env("DB_NAME", "DB_DATABASE", "TIDB_DATABASE") || "test"
+  };
+
+  const missing = ["host", "user", "password"].filter((key) => !config[key]);
+  if (missing.length) {
+    throw new Error(
+      `Ma'lumotlar bazasi sozlanmagan: ${missing
+        .map((k) => `DB_${k.toUpperCase()}`)
+        .join(", ")} muhit o'zgaruvchisi topilmadi.`
+    );
+  }
+  return config;
+}
+
 function getPool() {
   return mysql.createPool({
-    host: process.env.TIDB_HOST,
-    port: Number(process.env.TIDB_PORT || 4000),
-    user: process.env.TIDB_USER,
-    password: process.env.TIDB_PASSWORD,
-    database: process.env.TIDB_DATABASE || "test",
+    ...getDbConfig(),
     ssl: {
       minVersion: "TLSv1.2",
       rejectUnauthorized: true
@@ -21,6 +47,43 @@ function getPool() {
     waitForConnections: true,
     connectionLimit: 5
   });
+}
+
+// Columns the app needs. Missing ones are added to an existing table
+// (additive only — nothing is dropped or rewritten).
+const REQUIRED_COLUMNS = {
+  title: "VARCHAR(255) NOT NULL DEFAULT ''",
+  content: "TEXT NULL",
+  created_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+};
+
+let schemaReady = false;
+
+async function ensureSchema(pool) {
+  if (schemaReady) return;
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS notes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL DEFAULT '',
+      content TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  const [cols] = await pool.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notes'`
+  );
+  const existing = new Set(cols.map((c) => c.COLUMN_NAME.toLowerCase()));
+
+  for (const [name, definition] of Object.entries(REQUIRED_COLUMNS)) {
+    if (!existing.has(name)) {
+      await pool.execute(`ALTER TABLE notes ADD COLUMN ${name} ${definition}`);
+    }
+  }
+
+  schemaReady = true;
 }
 
 export async function handler(event) {
@@ -32,18 +95,11 @@ export async function handler(event) {
   try {
     pool = getPool();
 
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS notes (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        content TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+    await ensureSchema(pool);
 
     if (event.httpMethod === "GET") {
       const [rows] = await pool.query(
-        "SELECT id, title, content, created_at FROM notes ORDER BY id DESC"
+        "SELECT id, title, COALESCE(content, '') AS content, created_at FROM notes ORDER BY id DESC"
       );
       return {
         statusCode: 200,
