@@ -20,20 +20,30 @@ function env(...names) {
 function getDbConfig() {
   const config = {
     host: env("DB_HOST", "TIDB_HOST"),
-    port: Number(env("DB_PORT", "TIDB_PORT") || 4000),
+    port: env("DB_PORT", "TIDB_PORT"),
     user: env("DB_USER", "TIDB_USER"),
     password: env("DB_PASSWORD", "TIDB_PASSWORD"),
-    database: env("DB_NAME", "DB_DATABASE", "TIDB_DATABASE") || "test"
+    database: env("DB_NAME", "DB_DATABASE", "TIDB_DATABASE")
   };
 
-  const missing = ["host", "user", "password"].filter((key) => !config[key]);
+  // No hardcoded fallbacks: Netlify's secrets scanning fails the build when
+  // an environment variable's value appears literally in the source code.
+  const envNames = {
+    host: "DB_HOST",
+    port: "DB_PORT",
+    user: "DB_USER",
+    password: "DB_PASSWORD",
+    database: "DB_NAME"
+  };
+  const missing = Object.keys(envNames).filter((key) => !config[key]);
   if (missing.length) {
     throw new Error(
       `Ma'lumotlar bazasi sozlanmagan: ${missing
-        .map((k) => `DB_${k.toUpperCase()}`)
+        .map((k) => envNames[k])
         .join(", ")} muhit o'zgaruvchisi topilmadi.`
     );
   }
+  config.port = Number(config.port);
   return config;
 }
 
