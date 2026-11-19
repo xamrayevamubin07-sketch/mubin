@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mubin — Qaydlar (TiDB + Netlify)</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body {
+      margin: 0;
+      background: #f4f6fb;
+      color: #1e293b;
+      padding: 32px 16px;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    }
+    h1 { margin-top: 0; font-size: 24px; }
+    form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+    input, textarea {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 15px;
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    .note {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+      background: #f8fafc;
+    }
+    .note-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .note-title { font-weight: 700; font-size: 17px; }
+    .note-content { margin: 8px 0 0; white-space: pre-wrap; color: #334155; }
+    .del-btn {
+      background: #ef4444;
+      padding: 6px 12px;
+      font-size: 13px;
+    }
+    .del-btn:hover { background: #dc2626; }
+    .status { margin-bottom: 14px; font-size: 14px; color: #475569; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Qaydlar daftari</h1>
+    <div id="status" class="status">Yuklanmoqda...</div>
+
+    <form id="noteForm">
+      <input id="title" type="text" placeholder="Sarlavha..." required />
+      <textarea id="content" placeholder="Qayd matni..." required></textarea>
+      <button type="submit">Saqlash</button>
+    </form>
+
+    <div id="notesList"></div>
+  </div>
+
+  <script>
+    const API_URL = "/.netlify/functions/api";
+    const statusEl = document.getElementById("status");
+    const listEl = document.getElementById("notesList");
+    const formEl = document.getElementById("noteForm");
+
+    async function loadNotes() {
+      statusEl.textContent = "Bazadan ma'lumotlar yuklanmoqda...";
+      try {
+        const res = await fetch(API_URL);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Xatolik");
+
+        renderNotes(data.notes || []);
+        statusEl.textContent = `Jami yozuvlar: ${(data.notes || []).length} ta`;
+      } catch (err) {
+        statusEl.textContent = "Xato: " + err.message;
+      }
+    }
+
+    function renderNotes(notes) {
+      listEl.innerHTML = "";
+      if (!notes.length) {
+        listEl.innerHTML = "<p>Hozircha yozuvlar yo‘q.</p>";
+        return;
+      }
+      notes.forEach((n) => {
+        const div = document.createElement("div");
+        div.className = "note";
+        div.innerHTML = `
+          <div class="note-top">
+            <span class="note-title">${escapeHtml(n.title)}</span>
+            <button class="del-btn" onclick="deleteNote(${n.id})">O‘chirish</button>
+          </div>
+          <p class="note-content">${escapeHtml(n.content)}</p>
+        `;
+        listEl.appendChild(div);
+      });
+    }
+
+    async function deleteNote(id) {
+      try {
+        const res = await fetch(`${API_URL}?id=${id}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "O‘chirishda xato");
+        await loadNotes();
+      } catch (err) {
+        statusEl.textContent = "Xato: " + err.message;
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    formEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const titleInput = document.getElementById("title");
+      const contentInput = document.getElementById("content");
+
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: titleInput.value,
+            content: contentInput.value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Saqlashda xato");
+
+        titleInput.value = "";
+        contentInput.value = "";
+        await loadNotes();
+      } catch (err) {
+        statusEl.textContent = "Xato: " + err.message;
+      }
+    });
+
+    loadNotes();
+  </script>
+</body>
+</html>
